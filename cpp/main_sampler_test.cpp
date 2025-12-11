@@ -24,17 +24,53 @@ DebounceCore btn(get_slot_addr(BRIDGE_BASE, S7_BTN));
 SsegCore sseg(get_slot_addr(BRIDGE_BASE, S8_SSEG));
 I2cCore adt7420(get_slot_addr(BRIDGE_BASE, S10_I2C));
 PwmCore pwm(get_slot_addr(BRIDGE_BASE, S6_PWM));
-
-enum class MenuState {
-   START,
+/**
+ * Class definition of Interface
+ */
+enum class Interface {
+   IDLE,
    LIVE,
-   RESET,
-   EXIT
+   DIFF,
+
 };
 
-//------------------------------------------------------------------------------
-// Seven-segment display helpers
-//------------------------------------------------------------------------------
+/**
+ * Determine the current menu selection based on button presses.
+ */
+Interface check_btn(DebounceCore *db_p, GpoCore *led_p, bool &RST_BTN, bool &LIVE_BTN, bool &Z_BTN) {
+   int s = db_p->read();
+   Interface c_menu = Interface::IDLE;
+   if (s == 1) {
+      RST_BTN = true;
+      LIVE_BTN = false;
+      Z_BTN = false;
+      c_menu = Interface::IDLE;
+   } else if (s == 16) {
+      LIVE_BTN = true;
+      RST_BTN = false;
+      Z_BTN = false;
+      c_menu = Interface::LIVE;
+   } else if (s == 4) {
+      Z_BTN = true;
+      RST_BTN = false;
+      LIVE_BTN = false;
+      c_menu = Interface::DIFF;
+   }
+   return c_menu;
+}
+
+/**
+ * Track additional button presses while in the DIFF menu.
+ */
+void check_btn_r(DebounceCore *db_p, bool &AVG_BTN, bool &DIFF_BTN) {
+   int s = db_p->read();
+   if (s == 2) {
+      AVG_BTN = true;
+   } else if (s == 8) {
+      DIFF_BTN = true;
+   }
+}
+
 
 /** Clear every digit on the seven-segment display. */
 void sseg_clear(SsegCore *sseg_t) {
@@ -43,7 +79,7 @@ void sseg_clear(SsegCore *sseg_t) {
    }
 }
 
-/** Show "RST" to indicate the reset menu. */
+/** Show "RST" to indicate the DIFF menu. */
 void disp_RST(SsegCore *sseg_t) {
    sseg_t->set_dp(0x00);
    sseg_t->write_1ptn(0xAF, 2);  // R (small r)
@@ -77,9 +113,7 @@ void disp_LIVE(SsegCore *sseg_t) {
    sseg_t->write_1ptn(0x86, 0);  // E
 }
 
-//------------------------------------------------------------------------------
-// Temperature display helpers
-//------------------------------------------------------------------------------
+
 
 /**
  * Display a temperature difference on the seven-segment display and drive the
@@ -174,9 +208,7 @@ void temp_disp_F(float temp, SsegCore *sseg_t) {
    sseg_t->write_1ptn(sseg_t->h2s(temp_array[4]), 1);
 }
 
-//------------------------------------------------------------------------------
-// Sensor helpers
-//------------------------------------------------------------------------------
+
 
 /**
  * Read the ADT7420 temperature sensor and return the temperature in Celsius.
@@ -272,57 +304,6 @@ float measure_avg_tmp() {
    return avg_tmp;
 }
 
-//------------------------------------------------------------------------------
-// Input helpers
-//------------------------------------------------------------------------------
-
-/** Mirror switch state to LEDs. */
-void sw_led(GpiCore *sw_p, GpoCore *led_p) {
-   int swi = sw_p->read();
-   led_p->write(swi);
-}
-
-/**
- * Determine the current menu selection based on button presses.
- */
-MenuState check_btn(DebounceCore *db_p, GpoCore *led_p, bool &S, bool &L,
-                    bool &R) {
-   int s = db_p->read();
-   MenuState c_menu = MenuState::START;
-   if (s == 1) {
-      S = true;
-      L = false;
-      R = false;
-      c_menu = MenuState::START;
-   } else if (s == 16) {
-      L = true;
-      S = false;
-      R = false;
-      c_menu = MenuState::LIVE;
-   } else if (s == 4) {
-      R = true;
-      S = false;
-      L = false;
-      c_menu = MenuState::RESET;
-   }
-   return c_menu;
-}
-
-/**
- * Track additional button presses while in the reset menu.
- */
-void check_btn_r(DebounceCore *db_p, bool &A, bool &Z) {
-   int s = db_p->read();
-   if (s == 2) {
-      A = true;
-   } else if (s == 8) {
-      Z = true;
-   }
-}
-
-//------------------------------------------------------------------------------
-// LED animations
-//------------------------------------------------------------------------------
 
 /** Simple sweep animation for LEDs. */
 void led_animation(GpoCore *led_p) {
@@ -336,7 +317,7 @@ void led_animation(GpoCore *led_p) {
    }
 }
 
-/** Full LED flash used during reset. */
+/** Full LED flash used during DIFF. */
 void led_animation_rst(GpoCore *led_p) {
    for (int i = 0; i < 4; i++) {
       led_p->write(1, i);
@@ -347,53 +328,50 @@ void led_animation_rst(GpoCore *led_p) {
    }
 }
 
-//------------------------------------------------------------------------------
-// Main application
-//------------------------------------------------------------------------------
 
 int main() {
-   bool S = false;
-   bool L = false;
-   bool R = false;
-   bool A = false;
-   bool Z = false;
-   float storage;
+   bool RST_BTN = false;
+   bool LIVE_BTN = false;
+   bool Z_BTN = false;
+   bool AVG_BTN = false;
+   bool DIFF_BTN = false;
+   float saved_tmp;
 
    while (1) {
-      MenuState currentState = check_btn(&btn, &led, S, L, R);
+      Interface currentState = check_btn(&btn, &led, RST_BTN, LIVE_BTN, Z_BTN);
       switch (currentState) {
-         case MenuState::START:
+         case Interface::IDLE:
             disp_RST(&sseg);
             led_animation_rst(&led);
             sseg_clear(&sseg);
-            storage = 0;
-            Z = 0;
+            saved_tmp = 0;
+            DIFF_BTN = 0;
             led.write(0, 0);
             led.write(0, 1);
             led.write(0, 2);
             led.write(0, 3);
-            check_btn(&btn, &led, S, L, R);
+            check_btn(&btn, &led, RST_BTN, LIVE_BTN, Z_BTN);
             break;
 
-         case MenuState::LIVE:
+         case Interface::LIVE:
             sseg_clear(&sseg);
             disp_LIVE(&sseg);
             sleep_ms(2000);
-            while (L == 1) {
+            while (LIVE_BTN == 1) {
                adt7420_check(&adt7420, &led, &sseg, &sw);
-               check_btn(&btn, &led, S, L, R);
-               if (L == 0) {
+               check_btn(&btn, &led, RST_BTN, LIVE_BTN, Z_BTN);
+               if (LIVE_BTN == 0) {
                   sseg_clear(&sseg);
                   break;
                }
             }
             break;
 
-         case MenuState::RESET:
+         case Interface::DIFF:
             disp_AVG(&sseg);
-            while (R == 1) {
-               check_btn_r(&btn, A, Z);
-               if (A) {
+            while (Z_BTN == 1) {
+               check_btn_r(&btn, AVG_BTN, DIFF_BTN);
+               if (AVG_BTN) {
                   sseg_clear(&sseg);
                   disp_AVG(&sseg);
                   led_animation(&led);
@@ -402,23 +380,23 @@ int main() {
 
                   float tmp = measure_avg_tmp();
                   temp_disp_C(tmp, &sseg);
-                  storage = tmp;
+                  saved_tmp = tmp;
 
                   sleep_ms(500);
-                  A = false;
+                  AVG_BTN = false;
                }
 
-               if (Z) {
+               if (DIFF_BTN) {
                   sseg_clear(&sseg);
                   disp_DIFF(&sseg);
                   sleep_ms(2000);
                   sseg_clear(&sseg);
                }
-               while (Z) {
+               while (DIFF_BTN) {
                   float current = adt7420_read(&adt7420);
-                  float difference = storage - current;
+                  float difference = saved_tmp - current;
                   uart.disp("stored : ");
-                  uart.disp(storage);
+                  uart.disp(saved_tmp);
                   uart.disp("\n\r");
                   uart.disp("current : ");
                   uart.disp(current);
@@ -428,18 +406,18 @@ int main() {
                   uart.disp("\n\r");
                   temp_diff(difference, &sseg, &pwm);
                   sleep_ms(500);
-                  check_btn(&btn, &led, S, L, R);
-                  if (S == 1 || L == 1) {
+                  check_btn(&btn, &led, RST_BTN, LIVE_BTN, Z_BTN);
+                  if (RST_BTN == 1 || LIVE_BTN == 1) {
                      pwm.set_duty(0, 0);
                      pwm.set_duty(0, 1);
                      pwm.set_duty(0, 2);
-                     Z = false;
+                     DIFF_BTN = false;
                   }
                }
 
-               check_btn(&btn, &led, S, L, R);
+               check_btn(&btn, &led, RST_BTN, LIVE_BTN, Z_BTN);
             }
-            if (R == 0) {
+            if (Z_BTN == 0) {
                sseg_clear(&sseg);
                break;
             }
