@@ -18,249 +18,137 @@
 #include "ddfs_core.h"
 #include "adsr_core.h"
 
-/**
- * blink once per second for 5 times.
- * provide a sanity check for timer (based on SYS_CLK_FREQ)
- * @param led_p pointer to led instance
- */
-void timer_check(GpoCore *led_p) {
-   int i;
-
-   for (i = 0; i < 5; i++) {
-      led_p->write(0xffff);
-      sleep_ms(500);
-      led_p->write(0x0000);
-      sleep_ms(500);
-      debug("timer check - (loop #)/now: ", i, now_ms());
-   }
+// Display "RST" (Reset)
+void disp_RST(SsegCore *sseg_t) {
+     // Clear others first
+    sseg_t->set_dp(0x00); // Turn off decimal points
+    
+    // Display letters from left to right or right to left 
+    // (Adjust positions 7, 6, 5 based on your preference)
+    
+    // R (small r)
+    sseg_t->write_1ptn(0xAF, 2); 
+    // S (looks like 5)
+    sseg_t->write_1ptn(0x92, 1); 
+    // T (small t)
+    sseg_t->write_1ptn(0x87, 0); 
 }
 
-/**
- * check individual led
- * @param led_p pointer to led instance
- * @param n number of led
- */
-void led_check(GpoCore *led_p, int n) {
-   int i;
+// Display "AVG" (Average)
+void disp_AVG(SsegCore *sseg_t) {
+    //sseg_clear(sseg_t);
+    sseg_t->set_dp(0x00);
 
-   for (i = 0; i < n; i++) {
-      led_p->write(1, i);
-      sleep_ms(100);
-      led_p->write(0, i);
-      sleep_ms(100);
-   }
+    // A
+    sseg_t->write_1ptn(0x88, 2);
+    // V (looks like U)
+    sseg_t->write_1ptn(0xC1, 1); 
+    // G (looks like 9/g)
+    sseg_t->write_1ptn(0x90, 0); 
 }
 
-/**
- * leds flash according to switch positions.
- * @param led_p pointer to led instance
- * @param sw_p pointer to switch instance
- */
-void sw_check(GpoCore *led_p, GpiCore *sw_p) {
-   int i, s;
+// Display "DIFF" (Difference)
+void disp_DIFF(SsegCore *sseg_t) {
+    //sseg_clear(sseg_t);
+    sseg_t->set_dp(0x00);
 
-   s = sw_p->read();
-   for (i = 0; i < 30; i++) {
-      led_p->write(s);
-      sleep_ms(50);
-      led_p->write(0);
-      sleep_ms(50);
-   }
+    // D (small d)
+    sseg_t->write_1ptn(0xA1, 3);
+    // I (looks like 1)
+    sseg_t->write_1ptn(0xF9, 2);
+    // F
+    sseg_t->write_1ptn(0x8E, 1);
+    // F
+    sseg_t->write_1ptn(0x8E, 0);
+}
+void disp_LIVE(SsegCore *sseg_t) {
+    //sseg_clear(sseg_t);
+    sseg_t->set_dp(0x00); // Turn off decimal points
+
+    // L (Standard L) -> 0xC7
+    sseg_t->write_1ptn(0xC7, 3); 
+    
+    // I (Uses digit 1) -> 0xF9
+    sseg_t->write_1ptn(0xF9, 2); 
+    
+    // V (Uses U pattern) -> 0xC1
+    sseg_t->write_1ptn(0xC1, 1); 
+    
+    // E (Standard E) -> 0x86
+    sseg_t->write_1ptn(0x86, 0); 
+}
+void temp_diff(float temp, SsegCore *sseg_t, PwmCore *pwm_p){
+    sseg_t->set_dp(0x00);
+
+    // 1. MANUAL ABSOLUTE VALUE
+    // We need positive numbers for the % math to work correctly
+    bool is_negative = false;
+    if (temp < 0.0) {
+        is_negative = true;
+        temp = -temp; // Flip it to positive manually
+    }
+
+    // 2. FIX ROUNDING ERROR (The 0.475 fix)
+    // 0.475 is often stored as 0.474999. 
+    // Adding 0.5 forces it to bump up to the next integer before casting.
+    int temp_input = static_cast<int>(temp * 1000.0 + 0.5);
+
+    int temp_array[5];
+    temp_array[0] = (temp_input / 10000) % 10; // Tens place
+    temp_array[1] = (temp_input / 1000) % 10;  // Ones place (digit left of dot)
+    temp_array[2] = (temp_input / 100) % 10;   // 0.1
+    temp_array[3] = (temp_input / 10) % 10;    // 0.01
+    temp_array[4] = (temp_input / 1) % 10;     // 0.001
+    
+    // Display "C" symbol
+    sseg_t->write_1ptn(sseg_t->h2s(12), 0);
+    
+    // Decimal point at position 4 (XX.XXX)
+    // Note: Your original code had set_dp(0x10) which is Bit 4.
+    sseg_t->set_dp(0x10);
+
+    // Write the decimals
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[4]), 1);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[3]), 2);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[2]), 3);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[1]), 4);
+
+    // 3. HANDLE NEGATIVE SIGN / LEADING ZERO
+    if (is_negative) {
+        // If it is negative, we usually put a dash.
+        // If the number is -0.475, temp_array[0] is 0. 
+        // We replace that leading 0 with a dash.
+        
+        // 0xBF is the raw segment code for a dash '-' (center segment only) on most boards
+        // If your board is different, you might need a different hex code.
+        sseg_t->write_1ptn(0xBF, 5); 
+        pwm_p->set_duty(1023,0);
+        pwm_p->set_duty(0,1);
+        pwm_p->set_duty(0,2); 
+    } 
+    else if(temp==0){
+        pwm_p->set_duty(0,0);
+        pwm_p->set_duty(1,1);
+        pwm_p->set_duty(0,2); 
+    } 
+
+    
+    else {
+        pwm_p->set_duty(0,0);
+        pwm_p->set_duty(0,1);
+        pwm_p->set_duty(1023,2); 
+        
+        // If positive, checking leading zero suppression
+        if (temp_array[0] == 0) {
+             // Blank the leading zero (0xFF is blank on Active Low)
+             sseg_t->write_1ptn(0xFF, 5); 
+        } else {
+             sseg_t->write_1ptn(sseg_t->h2s(temp_array[0]), 5);
+        }
+    }
 }
 
-/**
- * uart transmits test line.
- * @note uart instance is declared as global variable in chu_io_basic.h
- */
-void uart_check() {
-   static int loop = 0;
-
-   uart.disp("uart test #");
-   uart.disp(loop);
-   uart.disp("\n\r");
-   loop++;
-}
-
-/**
- * read FPGA internal voltage temperature
- * @param adc_p pointer to xadc instance
- */
-
-void adc_check(XadcCore *adc_p, GpoCore *led_p) {
-   double reading;
-   int n, i;
-   uint16_t raw;
-
-   for (i = 0; i < 5; i++) {
-      // display 12-bit channel 0 reading in LED
-      raw = adc_p->read_raw(0);
-      raw = raw >> 4;
-      led_p->write(raw);
-      // display on-chip sensor and 4 channels in console
-      uart.disp("FPGA vcc/temp: ");
-      reading = adc_p->read_fpga_vcc();
-      uart.disp(reading, 3);
-      uart.disp(" / ");
-      reading = adc_p->read_fpga_temp();
-      uart.disp(reading, 3);
-      uart.disp("\n\r");
-      for (n = 0; n < 4; n++) {
-         uart.disp("analog channel/voltage: ");
-         uart.disp(n);
-         uart.disp(" / ");
-         reading = adc_p->read_adc_in(n);
-         uart.disp(reading, 3);
-         uart.disp("\n\r");
-      } // end for
-      sleep_ms(200);
-   }
-}
-
-/**
- * tri-color led dims gradually
- * @param led_p pointer to led instance
- * @param sw_p pointer to switch instance
- */
-
-void pwm_3color_led_check(PwmCore *pwm_p) {
-   int i, n;
-   double bright, duty;
-   const double P20 = 1.2589;  // P20=100^(1/20); i.e., P20^20=100
-
-   pwm_p->set_freq(50);
-   for (n = 0; n < 3; n++) {
-      bright = 1.0;
-      for (i = 0; i < 20; i++) {
-         bright = bright * P20;
-         duty = bright / 100.0;
-         pwm_p->set_duty(duty, n);
-         pwm_p->set_duty(duty, n + 3);
-         sleep_ms(100);
-      }
-      sleep_ms(300);
-      pwm_p->set_duty(0.0, n);
-      pwm_p->set_duty(0.0, n + 3);
-   }
-}
-
-/**
- * Test debounced buttons
- *   - count transitions of normal and debounced button
- * @param db_p pointer to debouceCore instance
- */
-
-void debounce_check(DebounceCore *db_p, GpoCore *led_p) {
-   long start_time;
-   int btn_old, db_old, btn_new, db_new;
-   int b = 0;
-   int d = 0;
-   uint32_t ptn;
-
-   start_time = now_ms();
-   btn_old = db_p->read();
-   db_old = db_p->read_db();
-   do {
-      btn_new = db_p->read();
-      db_new = db_p->read_db();
-      if (btn_old != btn_new) {
-         b = b + 1;
-         btn_old = btn_new;
-      }
-      if (db_old != db_new) {
-         d = d + 1;
-         db_old = db_new;
-      }
-      ptn = d & 0x0000000f;
-      ptn = ptn | (b & 0x0000000f) << 4;
-      led_p->write(ptn);
-   } while ((now_ms() - start_time) < 5000);
-}
-
-/**
- * Test pattern in 7-segment LEDs
- * @param sseg_p pointer to 7-seg LED instance
- */
-
-void sseg_check(SsegCore *sseg_p) {
-   int i, n;
-   uint8_t dp;
-
-   //turn off led
-   for (i = 0; i < 8; i++) {
-      sseg_p->write_1ptn(0xff, i);
-   }
-   //turn off all decimal points
-   sseg_p->set_dp(0x00);
-
-   // display 0x0 to 0xf in 4 epochs
-   // upper 4  digits mirror the lower 4
-   for (n = 0; n < 4; n++) {
-      for (i = 0; i < 4; i++) {
-         sseg_p->write_1ptn(sseg_p->h2s(i + n * 4), 3 - i);
-         sseg_p->write_1ptn(sseg_p->h2s(i + n * 4), 7 - i);
-         sleep_ms(300);
-      } // for i
-   }  // for n
-      // shift a decimal point 4 times
-   for (i = 0; i < 4; i++) {
-      bit_set(dp, 3 - i);
-      sseg_p->set_dp(1 << (3 - i));
-      sleep_ms(300);
-   }
-   //turn off led
-   for (i = 0; i < 8; i++) {
-      sseg_p->write_1ptn(0xff, i);
-   }
-   //turn off all decimal points
-   sseg_p->set_dp(0x00);
-
-}
-
-/**
- * Test adxl362 accelerometer using SPI
- */
-
-void gsensor_check(SpiCore *spi_p, GpoCore *led_p) {
-   const uint8_t RD_CMD = 0x0b;
-   const uint8_t PART_ID_REG = 0x02;
-   const uint8_t DATA_REG = 0x08;
-   const float raw_max = 127.0 / 2.0;  //128 max 8-bit reading for +/-2g
-
-   int8_t xraw, yraw, zraw;
-   float x, y, z;
-   int id;
-
-   spi_p->set_freq(400000);
-   spi_p->set_mode(0, 0);
-   // check part id
-   spi_p->assert_ss(0);    // activate
-   spi_p->transfer(RD_CMD);  // for read operation
-   spi_p->transfer(PART_ID_REG);  // part id address
-   id = (int) spi_p->transfer(0x00);
-   spi_p->deassert_ss(0);
-   uart.disp("read ADXL362 id (should be 0xf2): ");
-   uart.disp(id, 16);
-   uart.disp("\n\r");
-   // read 8-bit x/y/z g values once
-   spi_p->assert_ss(0);    // activate
-   spi_p->transfer(RD_CMD);  // for read operation
-   spi_p->transfer(DATA_REG);  //
-   xraw = spi_p->transfer(0x00);
-   yraw = spi_p->transfer(0x00);
-   zraw = spi_p->transfer(0x00);
-   spi_p->deassert_ss(0);
-   x = (float) xraw / raw_max;
-   y = (float) yraw / raw_max;
-   z = (float) zraw / raw_max;
-   uart.disp("x/y/z axis g values: ");
-   uart.disp(x, 3);
-   uart.disp(" / ");
-   uart.disp(y, 3);
-   uart.disp(" / ");
-   uart.disp(z, 3);
-   uart.disp("\n\r");
-}
-void temp_disp(float temp, SsegCore *sseg_t){
+void temp_disp_C(float temp, SsegCore *sseg_t){
     sseg_t->set_dp(0x00);
 	int temp_input = static_cast<int>(temp * 1000.0);
 	int temp_array[5];
@@ -282,16 +170,98 @@ void temp_disp(float temp, SsegCore *sseg_t){
     sseg_t->write_1ptn(sseg_t->h2s(temp_array[4]), 1);
 }
 
+void temp_disp_F(float temp, SsegCore *sseg_t){
+    sseg_t->set_dp(0x00);
+	int temp_input = static_cast<int>(temp * 1000.0);
+	int temp_array[5];
+	temp_array[0] = (temp_input / 10000) % 10;
+	temp_array[1] = (temp_input / 1000) % 10;
+	temp_array[2] = (temp_input / 100) % 10;
+	temp_array[3] = (temp_input / 10) % 10;
+	temp_array[4] = (temp_input / 1) % 10;
+    
+    //Celcius
+	sseg_t->write_1ptn(sseg_t->h2s(15), 0);
+    //decimal point
+	sseg_t->set_dp(0x10);
+
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[0]), 5);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[1]), 4);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[2]), 3);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[3]), 2);
+    sseg_t->write_1ptn(sseg_t->h2s(temp_array[4]), 1);
+}
+
 /*
  * read temperature from adt7420
  * @param adt7420_p pointer to adt7420 instance
  */
-void adt7420_check(I2cCore *adt7420_p, GpoCore *led_p, SsegCore *sseg_t) {
+void adt7420_check(I2cCore *adt7420_p, GpoCore *led_p, SsegCore *sseg_t,GpiCore *sw_p) {
    const uint8_t DEV_ADDR = 0x4b;
    uint8_t wbytes[2], bytes[2];
    //int ack;
    uint16_t tmp;
    float tmpC;
+   float tmpF; 
+   int s; 
+   s = sw_p->read(); 
+
+   // read adt7420 id register to verify device existence
+   // ack = adt7420_p->read_dev_reg_byte(DEV_ADDR, 0x0b, &id);
+
+   wbytes[0] = 0x0b;
+   adt7420_p->write_transaction(DEV_ADDR, wbytes, 1, 1);
+   adt7420_p->read_transaction(DEV_ADDR, bytes, 1, 0);
+   //uart.disp("read ADT7420 id (should be 0xcb): ");
+   //uart.disp(bytes[0], 16);
+   //uart.disp("\n\r");
+   //debug("ADT check ack/id: ", ack, bytes[0]);
+   // read 2 bytes
+   //ack = adt7420_p->read_dev_reg_bytes(DEV_ADDR, 0x0, bytes, 2);
+   wbytes[0] = 0x00;
+   adt7420_p->write_transaction(DEV_ADDR, wbytes, 1, 1);
+   adt7420_p->read_transaction(DEV_ADDR, bytes, 2, 0);
+
+   // conversion
+   tmp = (uint16_t) bytes[0];
+   tmp = (tmp << 8) + (uint16_t) bytes[1];
+   if (tmp & 0x8000) {
+      tmp = tmp >> 3;
+      tmpC = (float) ((int) tmp - 8192) / 16;
+   } else {
+      tmp = tmp >> 3;
+      tmpC = (float) tmp / 16;
+   }
+   if(s==1){
+       
+        tmpF = (tmpC*9/5)+32;
+        temp_disp_F(tmpF, sseg_t);
+   }
+   else {
+        temp_disp_C(tmpC, sseg_t);
+   
+   }
+   
+
+   /*uart.disp("temperature (C): ");
+   uart.disp(tmpC);
+   uart.disp("\n\r");
+   uart.disp("temperature (F): ");
+   uart.disp(tmpF);
+   uart.disp("\n\r");*/
+   //led_p->write(tmp);
+   //sleep_ms(1000);
+   //led_p->write(0);
+}
+
+float adt7420_read(I2cCore *adt7420_p) {
+   const uint8_t DEV_ADDR = 0x4b;
+   uint8_t wbytes[2], bytes[2];
+   //int ack;
+   uint16_t tmp;
+   float tmpC;
+
+
 
    // read adt7420 id register to verify device existence
    // ack = adt7420_p->read_dev_reg_byte(DEV_ADDR, 0x0b, &id);
@@ -319,198 +289,263 @@ void adt7420_check(I2cCore *adt7420_p, GpoCore *led_p, SsegCore *sseg_t) {
       tmp = tmp >> 3;
       tmpC = (float) tmp / 16;
    }
-   temp_disp(tmpC, sseg_t);
-   uart.disp("temperature (C): ");
+   
+
    uart.disp(tmpC);
    uart.disp("\n\r");
-   //led_p->write(tmp);
-   //sleep_ms(1000);
-   //led_p->write(0);
+
+
+   return tmpC; 
 }
 
-void ps2_check(Ps2Core *ps2_p) {
-   int id;
-   int lbtn, rbtn, xmov, ymov;
-   char ch;
-   unsigned long last;
-
-   uart.disp("\n\rPS2 device (1-keyboard / 2-mouse): ");
-   id = ps2_p->init();
-   uart.disp(id);
-   uart.disp("\n\r");
-   last = now_ms();
-   do {
-      if (id == 2) {  // mouse
-         if (ps2_p->get_mouse_activity(&lbtn, &rbtn, &xmov, &ymov)) {
-            uart.disp("[");
-            uart.disp(lbtn);
-            uart.disp(", ");
-            uart.disp(rbtn);
-            uart.disp(", ");
-            uart.disp(xmov);
-            uart.disp(", ");
-            uart.disp(ymov);
-            uart.disp("] \r\n");
-            last = now_ms();
-
-         }   // end get_mouse_activitiy()
-      } else {
-         if (ps2_p->get_kb_ch(&ch)) {
-            uart.disp(ch);
-            uart.disp(" ");
-            last = now_ms();
-         } // end get_kb_ch()
-      }  // end id==2
-   } while (now_ms() - last < 5000);
-   uart.disp("\n\rExit PS2 test \n\r");
-
-}
-
-/**
- * play primary notes with ddfs
- * @param ddfs_p pointer to ddfs core
- * @note: music tempo is defined as beats of quarter-note per minute.
- *        60 bpm is 1 sec per quarter note
- * @note "click" sound due to abrupt stop of a note
- *
- */
-void ddfs_check(DdfsCore *ddfs_p, GpoCore *led_p) {
-   int i, j;
-   float env;
-
-   //vol = (float)sw.read_pin()/(float)(1<<16),
-   ddfs_p->set_env_source(0);  // select envelop source
-   ddfs_p->set_env(0.0);   // set volume
-   sleep_ms(500);
-   ddfs_p->set_env(1.0);   // set volume
-   ddfs_p->set_carrier_freq(262);
-   sleep_ms(2000);
-   ddfs_p->set_env(0.0);   // set volume
-   sleep_ms(2000);
-   // volume control (attenuation)
-   ddfs_p->set_env(0.0);   // set volume
-   env = 1.0;
-   for (i = 0; i < 1000; i++) {
-      ddfs_p->set_env(env);
-      sleep_ms(10);
-      env = env / 1.0109; //1.0109**1024=2**16
-   }
-   // frequency modulation 635-912 800 - 2000 siren sound
-   ddfs_p->set_env(1.0);   // set volume
-   ddfs_p->set_carrier_freq(635);
-   for (i = 0; i < 5; i++) {               // 10 cycles
-      for (j = 0; j < 30; j++) {           // sweep 30 steps
-         ddfs_p->set_offset_freq(j * 10);  // 10 Hz increment
-         sleep_ms(25);
-      } // end j loop
-   } // end i loop
-   ddfs_p->set_offset_freq(0);
-   ddfs_p->set_env(0.0);   // set volume
-   sleep_ms(1000);
-}
-
-/**
- * play primary notes with ddfs
- * @param adsr_p pointer to adsr core
- * @param ddfs_p pointer to ddfs core
- * @note: music tempo is defined as beats of quarter-note per minute.
- *        60 bpm is 1 sec per quarter note
- *
- */
-void adsr_check(AdsrCore *adsr_p, GpoCore *led_p, GpiCore *sw_p) {
-   const int melody[] = { 0, 2, 4, 5, 7, 9, 11 };
-   int i, oct;
-
-   adsr_p->init();
-   // no adsr envelop and  play one octave
-   adsr_p->bypass();
-   for (i = 0; i < 7; i++) {
-      led_p->write(bit(i));
-      adsr_p->play_note(melody[i], 3, 500);
-      sleep_ms(500);
-   }
-   adsr_p->abort();
-   sleep_ms(1000);
-   // set and enable adsr envelop
-   // play 4 octaves
-   adsr_p->select_env(sw_p->read());
-   for (oct = 3; oct < 6; oct++) {
-      for (i = 0; i < 7; i++) {
-         led_p->write(bit(i));
-         adsr_p->play_note(melody[i], oct, 500);
-         sleep_ms(500);
-      }
-   }
-   led_p->write(0);
-   // test duration
-   sleep_ms(1000);
-   for (i = 0; i < 4; i++) {
-      adsr_p->play_note(0, 4, 500 * i);
-      sleep_ms(500 * i + 1000);
-   }
-}
-
-/**
- * core test
- * @param led_p pointer to led instance
- * @param sw_p pointer to switch instance
- */
-void show_test_id(int n, GpoCore *led_p) {
-   int i, ptn;
-
-   ptn = n; //1 << n;
-   for (i = 0; i < 20; i++) {
-      led_p->write(ptn);
-      sleep_ms(30);
-      led_p->write(0);
-      sleep_ms(30);
-   }
-}
 
 GpoCore led(get_slot_addr(BRIDGE_BASE, S2_LED));
 GpiCore sw(get_slot_addr(BRIDGE_BASE, S3_SW));
-XadcCore adc(get_slot_addr(BRIDGE_BASE, S5_XDAC));
-PwmCore pwm(get_slot_addr(BRIDGE_BASE, S6_PWM));
 DebounceCore btn(get_slot_addr(BRIDGE_BASE, S7_BTN));
 SsegCore sseg(get_slot_addr(BRIDGE_BASE, S8_SSEG));
-SpiCore spi(get_slot_addr(BRIDGE_BASE, S9_SPI));
 I2cCore adt7420(get_slot_addr(BRIDGE_BASE, S10_I2C));
-Ps2Core ps2(get_slot_addr(BRIDGE_BASE, S11_PS2));
-DdfsCore ddfs(get_slot_addr(BRIDGE_BASE, S12_DDFS));
-AdsrCore adsr(get_slot_addr(BRIDGE_BASE, S13_ADSR), &ddfs);
+PwmCore pwm(get_slot_addr(BRIDGE_BASE, S6_PWM));
 
+enum class MenuState {
+    START,
+    LIVE,
+    RESET,
+    EXIT
+};
+MenuState check_btn(DebounceCore *db_p, GpoCore *led_p, bool &S, bool &L, bool &R){
+    int s; 
+    s = db_p->read(); 
+    MenuState c_menu; 
+    if (s == 1){
+        S = 1; 
+        L =0; 
+        R = 0; 
+
+        c_menu = MenuState::START; 
+
+    }
+    else if(s==16){
+        L = 1; 
+        S = 0; 
+        R = 0; 
+
+        c_menu = MenuState::LIVE; 
+        
+    }
+    else if(s==4){
+        R = 1; 
+        S = 0; 
+        L = 0; 
+
+        c_menu = MenuState::RESET;
+
+    
+    }
+    else{
+
+    }
+    return c_menu;
+
+}
+
+void check_btn_r(DebounceCore *db_p, bool &A, bool &Z){
+    int s; 
+    s = db_p->read(); 
+
+    if (s == 2){
+        
+        A = true; 
+
+    }
+    else if (s == 8){
+        Z = true; 
+    }
+    //A = false; 
+}
+void sw_led(GpiCore *sw, GpoCore *led){
+    int swi; 
+    swi = sw->read();
+    led->write(swi); 
+
+}
+void sseg_clear(SsegCore *sseg){
+    sseg->write_1ptn(0xFF,0);
+    sseg->write_1ptn(0xFF,1);
+    sseg->write_1ptn(0xFF,2);
+    sseg->write_1ptn(0xFF,3);
+    sseg->write_1ptn(0xFF,4);
+    sseg->write_1ptn(0xFF,5);
+    sseg->write_1ptn(0xFF,6);
+    sseg->write_1ptn(0xFF,7);
+    sseg->write_1ptn(0xFF,8);
+}
+
+float measure_avg_tmp(){
+      int j; 
+      float total_tmp = 0; 
+      float avg_tmp; 
+      for(int j = 0; j<30; j++){
+      total_tmp += adt7420_read(&adt7420);
+      }
+      avg_tmp = total_tmp / 30; 
+
+      uart.disp("\n\r"); 
+      uart.disp("total temp: "); 
+      uart.disp(total_tmp);
+      uart.disp("\n\r");
+      uart.disp("avg_tmp: "); 
+      uart.disp(avg_tmp);
+      uart.disp("\n\r");
+      sleep_ms(1000); 
+      return avg_tmp; 
+
+}
+void led_animation(GpoCore *led){
+    for (int i = 0; i<4; i++){
+        led->write(1,i); 
+        sleep_ms(100); 
+    }
+        for (int i = 3; i>-1; i--){
+        led->write(0,i); 
+        sleep_ms(100); 
+    }
+
+}
+void led_animation_rst(GpoCore *led){
+    for (int i = 0; i<4; i++){
+        led->write(1,i); 
+    }
+    sleep_ms(1000); 
+        for (int i = 3; i>-1; i--){
+        led->write(0,i); 
+
+    }
+
+}
 
 int main() {
-   //uint8_t id, ;
+   bool S = false;
+   bool L = false; 
+   bool R = false; 
+   bool A = false; 
+   bool Z = false; 
+   float storage; 
 
-   //timer_check(&led);
+  
+
+   
+
    while (1) {
-      /*show_test_id(1, &led);
-      led_check(&led, 16);
-      sw_check(&led, &sw);
-      show_test_id(3, &led);
-      uart_check();
-      debug("main - switch value / up time : ", sw.read(), now_ms());
-      show_test_id(5, &led);
-      adc_check(&adc, &led);
-      show_test_id(6, &led);
-      pwm_3color_led_check(&pwm);
-      show_test_id(7, &led);
-      debounce_check(&btn, &led);
-      show_test_id(8, &led);
-      sseg_check(&sseg);
-      show_test_id(9, &led);
-      gsensor_check(&spi, &led);
-      show_test_id(10, &led);*/
-      adt7420_check(&adt7420, &led, &sseg);
-      //sseg_check(&sseg);
-      sleep_ms(500); 
-      /*show_test_id(11, &led);
-      ps2_check(&ps2);
-      show_test_id(12, &led);
-      ddfs_check(&ddfs, &led);
-      show_test_id(13, &led);
-      adsr_check(&adsr, &led, &sw);*/
+       
+       
+       MenuState currentState = check_btn(&btn,&led,S,L,R);
+       switch (currentState) {
+            case MenuState::START:
+            disp_RST(&sseg); 
+            led_animation_rst(&led); 
+            sseg_clear(&sseg); 
+            storage = 0;  
+            Z =0; 
+            led.write(0,0); 
+            led.write(0,1); 
+            led.write(0,2); 
+            led.write(0,3);
+                //sseg.write_1ptn(sseg.h2s(), int pos)
+
+                check_btn(&btn,&led,S,L,R);
+
+                break;
+
+            case MenuState::LIVE:
+                sseg_clear(&sseg); 
+                disp_LIVE(&sseg);
+                sleep_ms(2000); 
+                while(L == 1){
+                    adt7420_check(&adt7420, &led, &sseg, &sw);
+                    check_btn(&btn,&led,S,L,R);
+                    if(L==0){
+                        sseg_clear(&sseg);
+                        break; 
+                    }
+                  
+                }
+                
+                break;
+
+            case MenuState::RESET:
+                disp_AVG(&sseg); 
+                while(R==1){
+                    check_btn_r(&btn, A,Z); 
+                    if(A){
+                    sseg_clear(&sseg); 
+                    disp_AVG(&sseg); 
+                    led_animation(&led); 
+                    sleep_ms(1000); 
+                    sseg_clear(&sseg); 
+                    
+                    float tmp = measure_avg_tmp(); 
+                    temp_disp_C(tmp, &sseg);
+                    storage= tmp; 
+                 
+                    sleep_ms(500);
+                    A= false; 
+                    }
+                  
+                    //sseg_clear(&sseg);
+                    if(Z){
+                        sseg_clear(&sseg);
+                        disp_DIFF(&sseg);
+                        sleep_ms(2000); 
+                        sseg_clear(&sseg);
+                    }
+                    while(Z){
+                        float current =  adt7420_read(&adt7420); 
+                
+                        float difference = storage - current;
+                        uart.disp("stored : ");
+                        uart.disp(storage); 
+                        uart.disp("\n\r");
+                         uart.disp("current : ");
+                        uart.disp(current); 
+                        uart.disp("\n\r");
+                        uart.disp("difference : ");
+                        uart.disp(difference); 
+                        uart.disp("\n\r");
+                        temp_diff(difference, &sseg, &pwm);                    
+                        sleep_ms(500);
+                        //Z = false; 
+                        check_btn(&btn,&led,S,L,R);
+                        if(S==1||L==1){
+                            pwm.set_duty(0,0); 
+                            pwm.set_duty(0,1); 
+                            pwm.set_duty(0,2); 
+                            Z =false;
+                        }
+                        
+                    }
+                    
+                     
+                  
+                    check_btn(&btn,&led,S,L,R);
+                }
+                if(R==0){
+                    sseg_clear(&sseg); 
+                    break; 
+                }
+
+                break;
+
+            default:
+
+                break;
+        }
+
+  
+
+
+      }
+
+
    } //while
-} //main
+ //main
 
