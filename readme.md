@@ -1,5 +1,5 @@
 
-**1 Introduction**
+**Introduction**\
 This final project implements a digital thermostat system designed to replicate
 core HVAC monitoring functions. The system features three primary modes:
 real-time temperature display, baseline average recording, and a differential
@@ -13,7 +13,7 @@ final system is on YouTube:
 
 [https://www.youtube.com/shorts/azU49sJCd7U](URL)
 
-**2. Design**
+**Design**\
 The system is primarily controlled through the onboard push buttons. Upon
 startup, the board enters the IDLE state, indicated by ’RST’ on the SSEG
 display and rightmost four LEDs illuminating. The top button functions as a
